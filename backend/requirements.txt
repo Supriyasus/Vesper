@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+transformers
+torch
+wikipedia
+pymupdf
+pydantic
+python-dotenv
+requests
+cohere
+google-generativeai
+typing-extensions
+python-multipart
