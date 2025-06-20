@@ -65,29 +65,6 @@ This project is an AI-powered application with a backend built using FastAPI and
 1. Open the frontend in your browser at `http://localhost:3000`.
 2. Interact with the application to generate text, perform semantic searches, or summarize PDFs.
 
-## Tabs Overview
-
-### Home
-- Provides an introduction to the application and its features.
-
-### Generate
-- Allows users to generate text using AI models like Cohere and Google's generative AI.
-
-### AutoLitReview
-- Automates the process of generating literature reviews based on user input.
-
-### PdfSummarizer
-- Extracts and summarizes content from uploaded PDF files.
-
-### Codex
-- Offers advanced AI functionalities for code-related tasks.
-
-### Humanizer
-- Enhances text by making it more human-like and readable.
-
-### About
-- Displays information about the application and its purpose.
-
 ## Contributing
 Feel free to contribute to this project by submitting issues or pull requests.
 
