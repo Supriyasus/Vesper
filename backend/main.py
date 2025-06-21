@@ -154,8 +154,8 @@ async def summarize_pdf_advanced(file: UploadFile = File(...), query: str = Form
             # Skip empty or overly long sections
             if not section_text.strip():
                 continue
-            if len(section_text.split()) > 800:
-                section_text = " ".join(section_text.split()[:800])  # truncate
+            if len(section_text.split()) > 1200:
+                section_text = " ".join(section_text.split()[:1200])  # truncate
 
             print(f"Summarizing section: {title} ({len(section_text.split())} words)")
 
@@ -169,10 +169,10 @@ Your job is to:
 - Organize it into structured Markdown:
   - Begin with the **Section Title**.
   - Use relevant **subheadings** (e.g., Background, Methods, Findings, Insights).
-  - List key points as **bullet points**.
-- Maintain a crisp academic style (~150–250 words total).
+  - List key points as **bullet points** or in short paragraphs.
+- Expand on key ideas. Be detailed, but focused.
+- Aim for a total length of **300–400 words**.
 - Do NOT copy verbatim from the text.
-- Incorporate the user query context if applicable.
 
 ### User Query:
 {query.strip() or 'Summarize this section.'}
@@ -186,7 +186,7 @@ Return only the clean, Markdown-formatted structured summary.
             response = co.generate(
                 model="command-light",
                 prompt=prompt,
-                max_tokens=300,
+                max_tokens=600,
                 temperature=0.6
             )
 
