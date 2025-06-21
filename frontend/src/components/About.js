@@ -30,8 +30,7 @@ const AboutUs = () => {
                         <div className="col-md-6">
                             <h1 className="display-5 fw-bold">AI-powered Writing, Reimagined.</h1>
                             <p className="lead text-muted">
-                                We’re building a smart, creative, and language-savvy platform that empowers users to
-                                <strong> refine, humanize, and explore content</strong> effortlessly. From research automation to rewriting with empathy, our tools are crafted for productivity and quality.
+                                We’re building a smart, creative, and language-conscious platform that empowers everyone — from students to researchers — to <strong>refine, humanize, and interact with content and code</strong> effortlessly. Whether you’re summarizing research papers, rewriting complex text, or debugging code with clarity, our AI-powered tools are designed to boost productivity, insight, and expression.
                             </p>
                         </div>
 
@@ -103,7 +102,7 @@ Welcome to Vesper. 🚀
             {/* Connect Section */}
             <div
                 style={{
-                    backgroundColor: '#F5C7A9',  
+                    backgroundColor: '#F5C7A9',
                     height: '3rem',
                     width: '100%',
                 }}
