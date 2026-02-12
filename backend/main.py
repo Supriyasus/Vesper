@@ -1,60 +1,114 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import requests
 import cohere
-from dotenv import load_dotenv
 import os
 import google.generativeai as genai
 from enum import Enum
-from fastapi import File, UploadFile, Form
-import fitz  
+import fitz
 from typing import List
 import re
+import tempfile
+import logging
+from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# --------------------------------------------------
+# ENV
+# --------------------------------------------------
+if os.getenv("RENDER") is None:
+    load_dotenv()
+
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
-# FastAPI app
+co = cohere.Client(COHERE_API_KEY) if COHERE_API_KEY else None
+
+# --------------------------------------------------
+# APP
+# --------------------------------------------------
 app = FastAPI()
+
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    frontend_url,
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(dict.fromkeys(allowed_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
-# Cohere client
-co = cohere.Client(COHERE_API_KEY)
+logging.basicConfig(level=logging.INFO)
 
-# Pydantic model
+# --------------------------------------------------
+# MODELS
+# --------------------------------------------------
 class Query(BaseModel):
     query: str
 
 
+class Mode(str, Enum):
+    debug = "debug"
+    complete = "complete"
+    explain = "explain"
+
+
+class CodexQuery(BaseModel):
+    mode: Mode
+    query: str
+
+
+class LiteReviewQuery(BaseModel):
+    query: str
+
+
+# --------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# --------------------------------------------------
+# GENERATE TEXT
+# --------------------------------------------------
 @app.post("/generate_text/")
 def generate_text(query: Query):
     try:
+        if not GOOGLE_API_KEY:
+            raise HTTPException(500, "Google API key missing")
+
         model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(query.query)
-        return {"response": response.text.strip()}
-    except Exception as e:
-        print("Gemini Error:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({"response": response.text.strip()})
+
+    except Exception:
+        logging.exception("Gemini Error")
+        raise HTTPException(status_code=500, detail="Generation failed")
 
 
-class Query(BaseModel):
-    query: str
-
+# --------------------------------------------------
+# HUMANIZER
+# --------------------------------------------------
 @app.post("/humanize-text/")
 def humanize_text(query: Query):
+
+    if not co:
+        raise HTTPException(500, "Cohere API key not configured")
+
     try:
         prompt = f"""
 Rewrite the following text so it reads like it was written by a human. Keep the original meaning and all technical information intact, but make the tone smoother, more natural, and more engaging. Avoid robotic phrasing. The rewritten version should sound professional, authentic, and easy to read — as if written by a skilled human writer.
@@ -65,7 +119,6 @@ Original Text:
 Humanized Version:
 """
 
-
         response = co.generate(
             model="command-light",
             prompt=prompt,
@@ -75,22 +128,23 @@ Humanized Version:
             p=0.9,
             stop_sequences=["--"]
         )
-        return {"response": response.generations[0].text.strip()}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({"response": response.generations[0].text.strip()})
 
-class Mode(str, Enum):
-    debug = "debug"
-    complete = "complete"
-    explain = "explain"
+    except Exception:
+        logging.exception("Humanizer failed")
+        raise HTTPException(status_code=500, detail="Humanization failed")
 
-class CodexQuery(BaseModel):
-    mode: Mode
-    query: str
 
+# --------------------------------------------------
+# CODEX
+# --------------------------------------------------
 @app.post("/codex/")
 def codex_handler(data: CodexQuery):
+
+    if not co:
+        raise HTTPException(500, "Cohere API key not configured")
+
     try:
         mode = data.mode
         prompt_map = {
@@ -100,64 +154,72 @@ def codex_handler(data: CodexQuery):
         }
 
         prompt = prompt_map[mode]
+
         response = co.generate(
             model="command-light",
             prompt=prompt,
             max_tokens=400
         )
-        return {"response": response.generations[0].text.strip()}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({"response": response.generations[0].text.strip()})
 
-def chunk_text(text: str, max_words: int = 350, stride: int = 200) -> List[str]:
-    words = text.split()
-    return [
-        " ".join(words[i:i + max_words])
-        for i in range(0, len(words), stride)
-        if i + max_words <= len(words) or i == 0
-    ]
+    except Exception:
+        logging.exception("Codex failed")
+        raise HTTPException(status_code=500, detail="Codex processing failed")
 
+
+# --------------------------------------------------
+# PDF HELPERS
+# --------------------------------------------------
 def extract_sections(text: str) -> dict:
     sections = {}
     current_section = "Abstract"
     sections[current_section] = []
+
     for line in text.splitlines():
         if re.match(r"^\d+(\.\d+)*\s+[A-Z][A-Za-z\s]*$", line.strip()):
             current_section = line.strip()
             sections[current_section] = []
         else:
             sections[current_section].append(line.strip())
+
     return {k: " ".join(v).strip() for k, v in sections.items() if v}
 
+
+# --------------------------------------------------
+# PDF SUMMARIZER
+# --------------------------------------------------
 @app.post("/summarize-pdf/")
 async def summarize_pdf_advanced(file: UploadFile = File(...), query: str = Form("")):
-    try:
-        # Step 1: Save and extract text from PDF
-        content = await file.read()
-        with open("temp.pdf", "wb") as f:
-            f.write(content)
 
-        doc = fitz.open("temp.pdf")
+    if not co:
+        raise HTTPException(500, "Cohere API key not configured")
+
+    try:
+        content = await file.read()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(content)
+            temp_path = tmp.name
+
+        doc = fitz.open(temp_path)
         full_text = "\n".join(page.get_text() or "" for page in doc)
         doc.close()
 
         if not full_text.strip():
             raise HTTPException(status_code=400, detail="Could not extract readable text from the PDF.")
 
-        # Step 2: Extract sections from text
         sections = extract_sections(full_text)
-        print(f"Extracted {len(sections)} sections")
 
         all_summaries = []
+
         for title, section_text in sections.items():
-            # Skip empty or overly long sections
+
             if not section_text.strip():
                 continue
-            if len(section_text.split()) > 1200:
-                section_text = " ".join(section_text.split()[:1200])  # truncate
 
-            print(f"Summarizing section: {title} ({len(section_text.split())} words)")
+            if len(section_text.split()) > 1200:
+                section_text = " ".join(section_text.split()[:1200])
 
             prompt = f"""
 You are an intelligent summarization assistant for academic research papers.
@@ -190,55 +252,66 @@ Return only the clean, Markdown-formatted structured summary.
                 temperature=0.6
             )
 
-            if not response.generations or not response.generations[0].text:
-                continue
-
-            summary = response.generations[0].text.strip()
-            all_summaries.append(summary)
+            if response.generations:
+                summary = response.generations[0].text.strip()
+                all_summaries.append(summary)
 
         if not all_summaries:
             raise HTTPException(status_code=422, detail="No content could be summarized.")
 
         final_output = "\n\n".join(all_summaries)
-        return {"response": final_output}
 
-    except Exception as e:
-        print("Summarization Error:", str(e))
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
+        return JSONResponse({"response": final_output})
 
+    except Exception:
+        logging.exception("Summarization Error")
+        raise HTTPException(status_code=500, detail="Summarization failed")
+
+
+# --------------------------------------------------
+# SEMANTIC SEARCH
+# --------------------------------------------------
 @app.get("/semantic-search/")
 def semantic_search(query: str):
+
     try:
         url = f"https://api.openalex.org/works?filter=title.search:{query}&per-page=8"
-        print("Fetching:", url)
         response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            papers = []
-            for item in data.get("results", []):
-                # Handle missing or empty authors
-                authorships = item.get("authorships", [])
-                authors = [auth.get("author", {}).get("display_name") for auth in authorships if auth.get("author")]
-                authors = [a for a in authors if a] or ["Unknown"]
 
-                papers.append({
-                    "title": item.get("title"),
-                    "authors": authors,
-                    "year": item.get("publication_year"),
-                    "link": item.get("id")  # OpenAlex link
-                })
-            return {"papers": papers}
-        else:
+        if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail="OpenAlex API failed.")
-    except Exception as e:
-        print("Error during OpenAlex search:", str(e))
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
-class LiteReviewQuery(BaseModel):
-    query: str
 
+        data = response.json()
+        papers = []
+
+        for item in data.get("results", []):
+            authorships = item.get("authorships", [])
+            authors = [auth.get("author", {}).get("display_name") for auth in authorships if auth.get("author")]
+            authors = [a for a in authors if a] or ["Unknown"]
+
+            papers.append({
+                "title": item.get("title"),
+                "authors": authors,
+                "year": item.get("publication_year"),
+                "link": item.get("id")
+            })
+
+        return JSONResponse({"papers": papers})
+
+    except Exception:
+        logging.exception("OpenAlex search failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# --------------------------------------------------
+# AUTO LIT REVIEW
+# --------------------------------------------------
 @app.post("/auto-lit-review/")
 def auto_lit_review(data: LiteReviewQuery):
+
+    if not co:
+        raise HTTPException(500, "Cohere API key not configured")
+
     try:
         prompt = f"""
 You are a literature review expert. Given the research query below, generate a concise, well-structured, and academic-style literature review by synthesizing insights from the top 3–5 most relevant papers.
@@ -283,12 +356,16 @@ Respond only with clean, formatted Markdown. Do not include extra commentary.
             max_tokens=700
         )
 
-        return {"response": response.generations[0].text.strip()}
+        return JSONResponse({"response": response.generations[0].text.strip()})
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate literature review: {str(e)}")
+    except Exception:
+        logging.exception("Lit review failed")
+        raise HTTPException(status_code=500, detail="Failed to generate literature review")
 
 
+# --------------------------------------------------
+# ROOT
+# --------------------------------------------------
 @app.get("/")
 def root():
     return {"message": "Backend with APIs is active."}
