@@ -3,6 +3,8 @@
 ## Overview
 Vesper is an AI-powered platform designed for researchers, students, and creators to refine, humanize, and interact with content and code. It supports tasks like PDF summarization, code debugging, text generation, and literature review — all via a clean, React-based interface backed by FastAPI.
 
+[Visit website](https://vesper-pi-fawn.vercel.app/)
+
 ## Key Features
 - Text Generation using Cohere and Google's Generative AI
 - PDF Summarization with section-wise analysis
