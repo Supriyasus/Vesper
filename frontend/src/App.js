@@ -8,8 +8,6 @@ import PdfSummarizer from "./components/PdfSummarizer";
 import AutoLitReview from "./components/AutoLitReview";
 import About from "./components/About";
 
-const apiUrl = process.env.REACT_APP_API_URL;
-
 function App() {
   return (
     <Router>
